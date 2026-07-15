@@ -1,12 +1,12 @@
 """Application « Création de BL dématérialisés ».
 
 Public : opérateurs logistiques en mobilité (réceptionnistes), sur smartphone
-ou tablette. Formulaire de type wizard en 4 étapes (cahier des charges) :
-  1. Informations de base  2. Informations de réception
-  3. Capture d'images      4. Récapitulatif et enregistrement
+ou tablette. Formulaire de type wizard en 3 étapes :
+  1. Informations du BL (numéro, fournisseur via DESADV, quai, état)
+  2. Numérisation des pages
+  3. Récapitulatif et enregistrement
 """
 
-import re
 import uuid
 import datetime
 
@@ -19,16 +19,16 @@ from bl_core.identity import get_current_user
 st.set_page_config(page_title="Création BL", page_icon="📥", layout="centered")
 
 ui.configurer_logs()
+ui.injecter_style()
 
-NB_ETAPES = 4
-NOMS_ETAPES = {1: "Informations de base", 2: "Informations de réception", 3: "Capture des pages", 4: "Récapitulatif"}
+NB_ETAPES = 3
+NOMS_ETAPES = {1: "Informations du BL", 2: "Numérisation des pages", 3: "Récapitulatif"}
 
 # --- État du wizard ---
 st.session_state.setdefault("etape", 1)
-st.session_state.setdefault("donnees", {})          # saisies utilisateur des étapes 1-2
+st.session_state.setdefault("donnees", {})          # saisies utilisateur de l'étape 1
 st.session_state.setdefault("pages", [])            # octets JPEG des pages traitées
-st.session_state.setdefault("photo_en_cours", None)  # octets bruts de la photo capturée (étape 3)
-st.session_state.setdefault("frs_connus", None)     # résultat du bouton "Vérifier"
+st.session_state.setdefault("photo_en_cours", None)  # octets bruts de la photo capturée (étape 2)
 st.session_state.setdefault("uploader_key", 0)      # rotation du widget de capture
 st.session_state.setdefault("enregistrement_lance", False)
 st.session_state.setdefault("bl_insere", False)
@@ -40,7 +40,7 @@ def aller_a(etape) -> None:
 
 
 def reinitialiser_wizard() -> None:
-    for cle in ("etape", "donnees", "pages", "photo_en_cours", "frs_connus", "uploader_key",
+    for cle in ("etape", "donnees", "pages", "photo_en_cours", "uploader_key",
                 "enregistrement_lance", "bl_insere", "id_bl", "numero_final"):
         st.session_state.pop(cle, None)
 
@@ -55,7 +55,7 @@ if etape in NOMS_ETAPES:
 donnees = st.session_state.donnees
 
 # =====================================================================
-# ÉTAPE 1 — Informations de base
+# ÉTAPE 1 — Informations du BL
 # =====================================================================
 if etape == 1:
     operation = st.radio(
@@ -64,88 +64,71 @@ if etape == 1:
         index=1 if donnees.get("archivage") else 0,
         horizontal=True,
     )
+    archivage = operation.startswith("Archivage")
+
     numero = st.text_input("Numéro du BL *", value=donnees.get("numero", ""), max_chars=60)
     date_reception = st.date_input("Date de réception *", value=donnees.get("date_reception", datetime.date.today()))
 
-    if st.button("Suivant ➡️", type="primary", use_container_width=True):
-        if not numero.strip():
-            st.error("Le numéro de BL est obligatoire.")
-        else:
-            archivage = operation.startswith("Archivage")
-            donnees.update({"numero": numero.strip(), "date_reception": date_reception, "archivage": archivage})
-            if archivage:
-                donnees["statut"] = repository.STATUT_OK  # imposé par le CDC
-            aller_a(2)
+    # --- Fournisseur : automatique via l'avis d'expédition (DESADV) quand le
+    # numéro de BL y figure ; sélection manuelle (filtre + liste) sinon. ---
+    frs_desadv = None
+    if numero.strip():
+        try:
+            frs_desadv = repository.fournisseur_pour_bl(numero.strip())
+        except Exception as e:
+            st.warning(f"Consultation des avis d'expédition impossible : {e} — "
+                       "sélectionnez le fournisseur manuellement.")
 
-# =====================================================================
-# ÉTAPE 2 — Informations de réception
-# =====================================================================
-elif etape == 2:
-    st.caption("Numéro d'article réceptionné * (préfixe P-00 déjà rempli)")
-    col_prefixe, col_chiffres, col_verif = st.columns([2, 4, 3])
-    with col_prefixe:
-        st.text_input("Préfixe", value="P-00", disabled=True, label_visibility="collapsed")
-    with col_chiffres:
-        chiffres = st.text_input(
-            "6 chiffres", value=donnees.get("art6", ""), max_chars=6,
-            placeholder="6 chiffres", label_visibility="collapsed",
+    if frs_desadv:
+        st.text_input(
+            "Fournisseur (avis d'expédition) ✓", value=frs_desadv, disabled=True,
+            help="Renseigné automatiquement : ce numéro de BL figure dans un avis "
+                 "d'expédition (DESADV).",
         )
-    with col_verif:
-        verifier = st.button("🔎 Vérifier", use_container_width=True)
+        fournisseur = frs_desadv
+    else:
+        if numero.strip():
+            st.caption("Ce BL est absent des avis d'expédition (DESADV) : "
+                       "sélectionnez le fournisseur manuellement.")
+        try:
+            tous_fournisseurs = repository.lister_fournisseurs()
+        except Exception as e:
+            tous_fournisseurs = []
+            st.error(f"Impossible de charger les fournisseurs : {e}")
 
-    if verifier:
-        if re.fullmatch(r"\d{6}", chiffres or ""):
-            try:
-                st.session_state.frs_connus = repository.fournisseurs_pour_article(f"P-00{chiffres}")
-            except Exception as e:
-                st.error(f"Vérification impossible : {e}")
+        # Sur smartphone, la liste déroulante n'ouvre pas le clavier (Streamlit
+        # désactive la saisie tactile dans st.selectbox) : le filtrage se fait
+        # donc dans un champ texte dédié, qui restreint les options de la liste.
+        filtre_frs = st.text_input(
+            "Filtrer les fournisseurs", value="",
+            placeholder="Tapez quelques lettres pour filtrer la liste…",
+        )
+        if filtre_frs.strip():
+            fournisseurs_affiches = [f for f in tous_fournisseurs
+                                     if filtre_frs.strip().lower() in f.lower()]
+            if not fournisseurs_affiches:
+                st.caption("Aucun fournisseur ne correspond à ce filtre.")
         else:
-            st.error("Saisissez exactement 6 chiffres après P-00.")
+            fournisseurs_affiches = tous_fournisseurs
 
-    # Champ d'information grisé : fournisseurs connus pour l'article vérifié.
-    frs_connus = st.session_state.frs_connus
-    if frs_connus is None:
-        info_article = ""
-    elif frs_connus:
-        info_article = ", ".join(frs_connus)
-    else:
-        info_article = "article inconnu"
-    st.text_input("Fournisseurs connus pour cet article", value=info_article, disabled=True)
+        index_frs = None
+        if donnees.get("fournisseur") in fournisseurs_affiches:
+            index_frs = fournisseurs_affiches.index(donnees["fournisseur"])
+        elif len(fournisseurs_affiches) == 1:
+            index_frs = 0                    # un seul résultat filtré : présélection
+        fournisseur = st.selectbox(
+            "Fournisseur *", options=fournisseurs_affiches,
+            index=index_frs, placeholder="Choisir un fournisseur…",
+        )
 
-    try:
-        tous_fournisseurs = repository.lister_fournisseurs()
-    except Exception as e:
-        tous_fournisseurs = []
-        st.error(f"Impossible de charger les fournisseurs : {e}")
-
-    # Sur smartphone, la liste déroulante n'ouvre pas le clavier (Streamlit
-    # désactive la saisie tactile dans st.selectbox) : le filtrage se fait donc
-    # dans un champ texte dédié, qui restreint les options de la liste.
-    filtre_frs = st.text_input(
-        "Filtrer les fournisseurs", value="",
-        placeholder="Tapez quelques lettres pour filtrer la liste…",
-    )
-    if filtre_frs.strip():
-        fournisseurs_affiches = [f for f in tous_fournisseurs
-                                 if filtre_frs.strip().lower() in f.lower()]
-        if not fournisseurs_affiches:
-            st.caption("Aucun fournisseur ne correspond à ce filtre.")
-    else:
-        fournisseurs_affiches = tous_fournisseurs
-
-    index_frs = None
-    if donnees.get("fournisseur") in fournisseurs_affiches:
-        index_frs = fournisseurs_affiches.index(donnees["fournisseur"])
-    elif frs_connus and frs_connus[0] in fournisseurs_affiches:
-        index_frs = fournisseurs_affiches.index(frs_connus[0])
-    elif len(fournisseurs_affiches) == 1:
-        index_frs = 0                        # un seul résultat filtré : présélection
-    fournisseur = st.selectbox(
-        "Fournisseur *", options=fournisseurs_affiches,
-        index=index_frs, placeholder="Choisir un fournisseur…",
+    index_quai = (repository.QUAIS_RECEPTION.index(donnees["quai"])
+                  if donnees.get("quai") in repository.QUAIS_RECEPTION else None)
+    quai = st.selectbox(
+        "Quai de réception *", options=repository.QUAIS_RECEPTION,
+        index=index_quai, placeholder="Choisir le quai…",
     )
 
-    if donnees.get("archivage"):
+    if archivage:
         st.radio("État de réception *", ["OK"], index=0, disabled=True, horizontal=True,
                  help="Archivage : l'état est imposé à OK.")
         statut = repository.STATUT_OK
@@ -158,26 +141,26 @@ elif etape == 2:
 
     commentaire = st.text_area("Commentaire (facultatif)", value=donnees.get("commentaire", ""), max_chars=1000)
 
-    col_prec, col_suiv = st.columns(2)
-    if col_prec.button("⬅️ Précédent", use_container_width=True):
-        donnees.update({"art6": chiffres, "commentaire": commentaire})
-        aller_a(1)
-    if col_suiv.button("Suivant ➡️", type="primary", use_container_width=True):
-        if not re.fullmatch(r"\d{6}", chiffres or ""):
-            st.error("Le numéro d'article doit comporter exactement 6 chiffres après P-00.")
+    if st.button("Suivant ➡️", type="primary", use_container_width=True):
+        if not numero.strip():
+            st.error("Le numéro de BL est obligatoire.")
         elif not fournisseur:
             st.error("Le fournisseur est obligatoire.")
+        elif not quai:
+            st.error("Le quai de réception est obligatoire.")
         else:
             donnees.update({
-                "art6": chiffres, "num_article": f"P-00{chiffres}",
-                "fournisseur": fournisseur, "statut": statut, "commentaire": commentaire.strip(),
+                "numero": numero.strip(), "date_reception": date_reception,
+                "archivage": archivage, "fournisseur": fournisseur,
+                "fournisseur_desadv": bool(frs_desadv), "quai": quai,
+                "statut": statut, "commentaire": commentaire.strip(),
             })
-            aller_a(3)
+            aller_a(2)
 
 # =====================================================================
-# ÉTAPE 3 — Capture d'images en flux continu (multipage)
+# ÉTAPE 2 — Numérisation des pages en flux continu (multipage)
 # =====================================================================
-elif etape == 3:
+elif etape == 2:
     st.caption(
         "Prenez chaque page en photo. Sur smartphone, le bouton ci-dessous "
         "propose directement l'appareil photo natif (qualité HD)."
@@ -254,18 +237,19 @@ elif etape == 3:
 
     col_prec, col_suiv = st.columns(2)
     if col_prec.button("⬅️ Précédent", use_container_width=True):
-        aller_a(2)
+        aller_a(1)
     if col_suiv.button("Suivant ➡️", type="primary", use_container_width=True):
         if not st.session_state.pages:
             st.error("Ajoutez au moins une page avant de continuer.")
         else:
-            aller_a(4)
+            aller_a(3)
 
 # =====================================================================
-# ÉTAPE 4 — Récapitulatif et enregistrement
+# ÉTAPE 3 — Récapitulatif et enregistrement
 # =====================================================================
-elif etape == 4:
+elif etape == 3:
     st.subheader("Récapitulatif")
+    origine_frs = " (avis d'expédition)" if donnees.get("fournisseur_desadv") else ""
     st.markdown(
         f"""
 | | |
@@ -273,8 +257,8 @@ elif etape == 4:
 | **Opération** | {"Archivage" if donnees.get("archivage") else "Nouvelle réception"} |
 | **Numéro de BL** | {donnees.get("numero", "")} |
 | **Date de réception** | {donnees.get("date_reception", "")} |
-| **Article** | {donnees.get("num_article", "")} |
-| **Fournisseur** | {donnees.get("fournisseur", "")} |
+| **Fournisseur** | {donnees.get("fournisseur", "")}{origine_frs} |
+| **Quai de réception** | {donnees.get("quai", "")} |
 | **État de réception** | {ui.libelle_statut(donnees.get("statut", repository.STATUT_OK))} |
 | **Commentaire** | {donnees.get("commentaire") or "—"} |
 | **Pages** | {len(st.session_state.pages)} |
@@ -295,8 +279,8 @@ elif etape == 4:
                         id_bl=id_bl,
                         numero_bl=numero_final,
                         date_reception=donnees["date_reception"],
-                        num_article=donnees["num_article"],
                         nom_fournisseur=donnees["fournisseur"],
+                        quai_reception=donnees["quai"],
                         statut_bl=donnees["statut"],
                         comment_bl=donnees["commentaire"],
                         operation_archivage=bool(donnees.get("archivage")),
@@ -321,7 +305,7 @@ elif etape == 4:
 
     col_prec, col_val = st.columns(2)
     if col_prec.button("⬅️ Précédent", use_container_width=True, disabled=st.session_state.enregistrement_lance):
-        aller_a(3)
+        aller_a(2)
     if col_val.button("💾 Valider", type="primary", use_container_width=True,
                       disabled=st.session_state.enregistrement_lance):
         st.session_state.enregistrement_lance = True
