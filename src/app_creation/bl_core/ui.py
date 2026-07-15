@@ -19,6 +19,59 @@ def configurer_logs() -> None:
         )
 
 
+def injecter_style() -> None:
+    """Habillage visuel commun aux deux applications, à appeler juste après
+    st.set_page_config. Complète le thème déclaré dans .streamlit/config.toml
+    (couleurs de base) : ici, uniquement du polish — cartes, boutons, titres."""
+    st.markdown(
+        """
+        <style>
+        /* Titre principal : graisse forte + soulignement dégradé court */
+        [data-testid="stAppViewContainer"] h1 {
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            padding-bottom: 0.35rem;
+            background: linear-gradient(90deg, #0F62A6, #4FA3E3)
+                        bottom left / 72px 4px no-repeat;
+        }
+        /* Boutons : coins arrondis, relief léger au survol */
+        .stButton > button, [data-testid="stFormSubmitButton"] > button {
+            border-radius: 10px;
+            font-weight: 600;
+            transition: transform 0.08s ease, box-shadow 0.15s ease;
+        }
+        .stButton > button:hover, [data-testid="stFormSubmitButton"] > button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 14px rgba(15, 98, 166, 0.25);
+        }
+        /* Barre de progression du wizard en dégradé */
+        .stProgress > div > div > div {
+            background: linear-gradient(90deg, #0F62A6, #4FA3E3);
+        }
+        /* Conteneurs bordés et expanders en "cartes" */
+        [data-testid="stExpander"], div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 12px;
+        }
+        [data-testid="stExpander"] {
+            border: 1px solid #E3E9F2;
+            box-shadow: 0 1px 4px rgba(27, 42, 58, 0.06);
+        }
+        /* Champs de saisie adoucis */
+        .stTextInput input, .stTextArea textarea, .stDateInput input,
+        [data-baseweb="select"] > div {
+            border-radius: 8px;
+        }
+        /* Tableau du récapitulatif : lignes aérées */
+        [data-testid="stMarkdownContainer"] table { width: 100%; }
+        [data-testid="stMarkdownContainer"] td { padding: 0.45rem 0.6rem; }
+        /* Pied de page Streamlit masqué (application métier) */
+        footer { visibility: hidden; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # --- Messages "flash" : survivent à un st.rerun (sinon le message disparaît
 # avant que l'utilisateur ait pu le lire). ---
 def set_flash(kind: str, message: str) -> None:
