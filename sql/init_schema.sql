@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS poc_bl.projet_livraison.suivi_bl (
   id_bl          STRING    NOT NULL COMMENT 'Clé primaire (UUID généré par l''app)',
   numero_bl      STRING    NOT NULL COMMENT 'Numéro écrit sur le document (unique, suffixé -1/-2/... si doublon)',
   date_reception DATE               COMMENT 'Date de livraison effective',
+  plage_horaire  STRING             COMMENT 'Plage horaire de réception (2 h de 06h à 20h + 00h-06h et 20h-00h) ; NULL pour un archivage',
   nom_fournisseur STRING            COMMENT 'Fournisseur, lié à base_frs.name',
   quai_reception STRING             COMMENT 'Quai de réception : B15, B06EST, B06NORD, B02NORD ou AUTRE',
   statut_bl      STRING             COMMENT '1 = OK, 0 = EDI NOK',
