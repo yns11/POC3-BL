@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS poc_bl.projet_livraison.suivi_bl (
   saisie_le      TIMESTAMP          COMMENT 'Horodatage de création (système)',
   modifie_par    STRING             COMMENT 'Dernier utilisateur modificateur',
   modifie_le     TIMESTAMP          COMMENT 'Horodatage de dernière modification',
-  operation_type BOOLEAN            COMMENT 'false = nouvelle réception, true = archivage',
+  type_operation STRING             COMMENT 'RECEPTION, EXPEDITION ou ARCHIVAGE',
   est_supprime   BOOLEAN            COMMENT 'Suppression logique (soft delete)',
   supprime_par   STRING             COMMENT 'Utilisateur ayant supprimé',
   supprime_le    TIMESTAMP          COMMENT 'Horodatage de suppression',
